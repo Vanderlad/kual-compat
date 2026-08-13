@@ -1,4 +1,4 @@
-# KUAL Compat
+# KUAL Compat (For Kindle Firmware 5.19.4+)
 
 An experimental KPM-native compatibility runner for firmware 5.19.4+.
 
