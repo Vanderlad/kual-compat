@@ -1,35 +1,31 @@
 # KUAL Compat (For Kindle Firmware 5.19.4+)
 
-An experimental KPM-native compatibility runner for firmware 5.19.4+.
+An experimental direct Véra scriptlet for Kindle firmware 5.19.4 and later.
 
-It lists and runs trusted, static legacy KUAL extension shell actions. It does
-not restore the original Java KUAL Booklet or make legacy native applications
-compatible.
+It scans legacy KUAL extension folders and lists compatible static shell actions.
+It does not restore the original Java KUAL Booklet, alter system files, execute
+an action automatically, or make old native applications compatible.
 
-## Manual installation (recommended for testing)
+## Install
 
-1. Download [`kual-compat_0.1.0_kindlehf.kpkg`](packages/kual-compat_0.1.0_kindlehf.kpkg).
-2. Copy it to the Kindle's root USB storage, next to `documents` rather than inside it.
-3. In the Kindle search bar, run:
+1. Download [`KUAL Compat.sh`](scriptlets/KUAL%20Compat.sh).
+2. Copy it directly into the Kindle's `documents` folder.
+3. Safely eject and unplug the Kindle. It should appear as **KUAL Compat** in
+   the Library; tap it to list compatible legacy extension actions.
 
-```text
-;kpm --fbink install file:///mnt/us/kual-compat_0.1.0_kindlehf.kpkg
-```
-
-4. List compatible legacy extension actions:
+The script scans this location:
 
 ```text
-;kpm --fbink launch kual-compat list
+/mnt/us/extensions/*/menu.json
 ```
-
-Then tap the **KUAL Compat** scriptlet in the Kindle library, or run the list
-command again whenever you add or change legacy extensions.
 
 Only use legacy extensions from sources you trust: their actions are shell
-commands and run with the permissions provided by the jailbreak.
+commands and may run with the permissions provided by the jailbreak.
 
-## Remove
+## Scope and limitations
 
-```text
-;kpm uninstall kual-compat
-```
+- It lists only common static menu items where `name` and `action` share a
+  line in `menu.json`.
+- It does not yet offer a tap-to-run action menu.
+- It does not make older ARM, GTK, Java, or device-specific extensions work.
+- It does not require KPM, a repository, or a `.kpkg` package.
