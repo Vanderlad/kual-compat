@@ -22,22 +22,8 @@ compatible.
 ;kpm --fbink launch kual-compat list
 ```
 
-## Repository installation
-
-Alternatively, add this repository to KPM and install by package name. Enter
-each command as a separate one-line search:
-
-```text
-;kpm add-repo https://raw.githubusercontent.com/Vanderlad/kual-compat/main/manifest.json
-;kpm update
-;kpm install kual-compat
-```
-
-Then tap the **KUAL Compat** scriptlet in the Kindle library, or run:
-
-```text
-;kpm --fbink launch kual-compat list
-```
+Then tap the **KUAL Compat** scriptlet in the Kindle library, or run the list
+command again whenever you add or change legacy extensions.
 
 Only use legacy extensions from sources you trust: their actions are shell
 commands and run with the permissions provided by the jailbreak.
