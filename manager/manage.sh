@@ -1,186 +1,101 @@
 #!/bin/sh
 # KUAL Compat Manager for Véra/KTerm.
-# Manages local legacy-extension archives without writing to system locations.
-
+# Numbered installer, launcher, and remover for static legacy extensions.
 set -u
 
 ROOT=/mnt/us
 EXTENSIONS="$ROOT/extensions"
 INBOX="$ROOT/extension-packages"
 STAGING="$INBOX/.kual-compat-staging"
-
 say() { printf '%s\n' "$*"; }
-pause() { printf '\nPress Enter to continue...'; read _unused; }
+pause() { printf '\nPress Enter to continue...'; read _; }
+init() { mkdir -p "$EXTENSIONS" "$INBOX" "$STAGING" || exit 1; }
 
-init_dirs() {
-    mkdir -p "$EXTENSIONS" "$INBOX" "$STAGING" || {
-        say 'Could not create KUAL Compat folders.'; exit 1;
-    }
-}
-
-list_extensions() {
-    say 'Installed extensions:'
-    found=0
-    for dir in "$EXTENSIONS"/*; do
-        [ -d "$dir" ] || continue
-        found=1
-        name=$(basename "$dir")
-        if [ -f "$dir/menu.json" ]; then
-            say "  $name (menu.json found)"
-        else
-            say "  $name (no menu.json)"
-        fi
-    done
-    [ "$found" -eq 1 ] || say '  None.'
-}
-
-list_packages() {
-    say 'Packages waiting in extension-packages:'
-    found=0
-    for file in "$INBOX"/*.zip "$INBOX"/*.tar "$INBOX"/*.tar.gz "$INBOX"/*.tgz "$INBOX"/*.tar.xz; do
-        [ -f "$file" ] || continue
-        found=1
-        say "  $(basename "$file")"
-    done
-    [ "$found" -eq 1 ] || say '  None.'
-}
-
-archive_type() {
-    case "$1" in
-        *.zip) printf '%s' zip ;;
-        *.tar|*.tar.gz|*.tgz|*.tar.xz) printf '%s' tar ;;
-        *) return 1 ;;
-    esac
-}
-
+archive_type() { case "$1" in *.zip) echo zip;; *.tar|*.tar.gz|*.tgz|*.tar.xz) echo tar;; *) return 1;; esac; }
 archive_list() {
-    case "$(archive_type "$1")" in
-        zip)
-            if command -v unzip >/dev/null 2>&1; then
-                unzip -Z1 "$1"
-            elif command -v zipinfo >/dev/null 2>&1; then
-                zipinfo -1 "$1"
-            else
-                return 2
-            fi
-            ;;
-        tar) tar -tf "$1" ;;
-    esac
+  case "$(archive_type "$1")" in
+    zip) command -v unzip >/dev/null 2>&1 && unzip -Z1 "$1" || { command -v zipinfo >/dev/null 2>&1 && zipinfo -1 "$1" || return 2; };;
+    tar) tar -tf "$1";;
+  esac
+}
+# Archive must contain one menu.json. This deliberately accepts GitHub's
+# project-main/extension/menu.json wrapper as well as extension/menu.json.
+extension_name() {
+  archive_list "$1" | awk '
+    /^\// || /(^|\/)\.\.($|\/)/ || /\/\.\// { bad=1 }
+    { p=$0; sub(/^\.\//,"",p); if (p ~ /(^|\/)menu\.json$/) { sub(/\/?menu\.json$/, "", p); menus[p]=1 } }
+    END { n=0; for (p in menus) {n++; chosen=p}; split(chosen,a,"/"); name=a[length(a)]; if (bad || n != 1 || name !~ /^[A-Za-z0-9._-]+$/) exit 1; print name }'
+}
+extract() { case "$(archive_type "$1")" in zip) unzip -q "$1" -d "$2";; tar) tar -xf "$1" -C "$2";; esac; }
+
+choose_package() {
+  index="$STAGING/packages-$$"; : > "$index"; n=0
+  for f in "$INBOX"/*.zip "$INBOX"/*.tar "$INBOX"/*.tar.gz "$INBOX"/*.tgz "$INBOX"/*.tar.xz; do
+    [ -f "$f" ] || continue; n=$((n+1)); printf '%s\n' "$f" >> "$index"; printf '  %d) %s\n' "$n" "$(basename "$f")"
+  done
+  [ "$n" -gt 0 ] || { rm -f "$index"; say 'No packages found in extension-packages.'; return 1; }
+  printf '\nSelect package number (Enter cancels): '; read pick
+  case "$pick" in ''|*[!0-9]*) rm -f "$index"; return 1;; esac
+  PICKED=$(sed -n "${pick}p" "$index"); rm -f "$index"; [ -n "$PICKED" ]
+}
+install() {
+  say 'Packages:'; choose_package || { say 'Cancelled.'; return; }
+  name=$(extension_name "$PICKED"); status=$?
+  [ "$status" -eq 0 ] && [ -n "$name" ] || { say 'Rejected: the archive must contain exactly one safe extension (one menu.json).'; return; }
+  case "$name" in kual-compat|kterm|.|..) say 'That extension name is reserved.'; return;; esac
+  target="$EXTENSIONS/$name"; [ ! -e "$target" ] || { say "Already installed: $name"; return; }
+  work="$STAGING/install-$$"; rm -rf "$work"; mkdir -p "$work" || return
+  extract "$PICKED" "$work" || { rm -rf "$work"; say 'Extraction failed.'; return; }
+  candidate=$(find "$work" -type f -name menu.json -print | sed -n '1p' | sed 's:/menu.json$::')
+  count=$(find "$work" -type f -name menu.json | wc -l)
+  [ "$count" -eq 1 ] && [ -d "$candidate" ] || { rm -rf "$work"; say 'Package layout changed; nothing installed.'; return; }
+  mv "$candidate" "$target" || { rm -rf "$work"; say 'Could not install extension.'; return; }
+  rm -rf "$work"; say "Installed $name. Select Launch to use it."
 }
 
-safe_member_list() {
-    # Reject absolute paths, traversal, and archives that do not contain a
-    # single extension directory. A package may be rooted at extensions/name/
-    # or directly at name/.
-    archive_list "$1" | awk '
-        /^\// || /(^|\/)\.\.($|\/)/ || /\/\.\// { bad=1 }
-        {
-          p=$0
-          sub(/^\.\//, "", p)
-          if (p ~ /^extensions\//) sub(/^extensions\//, "", p)
-          split(p, a, "/")
-          if (a[1] != "") roots[a[1]]=1
-        }
-        END {
-          n=0; for (root in roots) { n++; chosen=root }
-          if (bad || n != 1 || chosen !~ /^[A-Za-z0-9._-]+$/) exit 1
-          print chosen
-        }
-    '
+choose_extension() {
+  index="$STAGING/extensions-$$"; : > "$index"; n=0
+  for d in "$EXTENSIONS"/*; do
+    [ -d "$d" ] || continue; base=$(basename "$d")
+    [ "$base" = kual-compat ] && continue
+    n=$((n+1)); printf '%s\n' "$d" >> "$index"; printf '  %d) %s\n' "$n" "$base"
+  done
+  [ "$n" -gt 0 ] || { rm -f "$index"; say 'No extensions found.'; return 1; }
+  printf '\nSelect extension number (Enter cancels): '; read pick
+  case "$pick" in ''|*[!0-9]*) rm -f "$index"; return 1;; esac
+  PICKED=$(sed -n "${pick}p" "$index"); rm -f "$index"; [ -n "$PICKED" ]
 }
-
-extract_archive() {
-    case "$(archive_type "$1")" in
-        zip) unzip -q "$1" -d "$2" ;;
-        tar) tar -xf "$1" -C "$2" ;;
-    esac
+actions() {
+  # KUAL's static items hold name/action in one small JSON object.
+  tr '{' '\n' < "$1/menu.json" | while IFS= read -r item; do
+    name=$(printf '%s' "$item" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    act=$(printf '%s' "$item" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ -n "$name" ] && [ -n "$act" ] && printf '%s|%s\n' "$name" "$act"
+  done
 }
-
-install_package() {
-    list_packages
-    printf '\nType the exact package filename to install (or press Enter to cancel): '
-    read package
-    [ -n "$package" ] || return 0
-    case "$package" in
-        */*|.*) say 'Invalid package name.'; return 0 ;;
-    esac
-    source="$INBOX/$package"
-    [ -f "$source" ] || { say 'Package not found.'; return 0; }
-    archive_type "$source" >/dev/null || { say 'Supported formats: .zip, .tar, .tar.gz, .tgz, .tar.xz'; return 0; }
-
-    extension=$(safe_member_list "$source")
-    status=$?
-    if [ "$status" -eq 2 ]; then
-        say 'This Kindle does not have an unzip utility available for ZIP packages.'
-        say 'Use a .tar archive, or unpack the ZIP on your computer.'
-        return 0
-    fi
-    [ "$status" -eq 0 ] && [ -n "$extension" ] || {
-        say 'Rejected: package must contain exactly one safe extension folder.'
-        return 0
-    }
-
-    case "$extension" in kual-compat|.|..) say 'That extension name is reserved.'; return 0;; esac
-    target="$EXTENSIONS/$extension"
-    [ ! -e "$target" ] || { say "Already installed: $extension"; return 0; }
-
-    work="$STAGING/$extension-$$"
-    rm -rf "$work"
-    mkdir -p "$work" || return 1
-    if ! extract_archive "$source" "$work"; then
-        rm -rf "$work"
-        say 'Extraction failed; nothing was installed.'
-        return 0
-    fi
-
-    candidate="$work/$extension"
-    [ -d "$candidate" ] || candidate="$work/extensions/$extension"
-    if [ ! -d "$candidate" ]; then
-        rm -rf "$work"
-        say 'Extraction layout did not match the validated package; nothing was installed.'
-        return 0
-    fi
-
-    mv "$candidate" "$target" || { rm -rf "$work"; say 'Could not install extension.'; return 0; }
-    rm -rf "$work"
-    say "Installed $extension into extensions/."
-    if [ ! -f "$target/menu.json" ]; then
-        say 'Note: this folder has no menu.json, so it may not be a legacy KUAL extension.'
-    fi
+launch() {
+  say 'Extensions:'; choose_extension || { say 'Cancelled.'; return; }; dir=$PICKED
+  [ -f "$dir/menu.json" ] || { say 'This extension has no menu.json actions.'; return; }
+  index="$STAGING/actions-$$"; actions "$dir" > "$index"; n=$(wc -l < "$index")
+  [ "$n" -gt 0 ] || { rm -f "$index"; say 'No static launch actions found.'; return; }
+  say 'Actions:'; nl -ba "$index" | sed 's/|/  /'; printf '\nSelect action number (Enter cancels): '; read pick
+  case "$pick" in ''|*[!0-9]*) rm -f "$index"; say 'Cancelled.'; return;; esac
+  line=$(sed -n "${pick}p" "$index"); rm -f "$index"; [ -n "$line" ] || { say 'That action number does not exist.'; return; }
+  label=${line%%|*}; act=${line#*|}; case "$act" in /*|*'..'*) say 'Unsafe action path rejected.'; return;; esac
+  say "Running: $label"; ( cd "$dir" && /bin/sh -c "./$act" ); say "Finished: $label"
 }
-
-remove_extension() {
-    list_extensions
-    printf '\nType an extension folder name to remove (or press Enter to cancel): '
-    read extension
-    [ -n "$extension" ] || return 0
-    case "$extension" in *[!A-Za-z0-9._-]*|'') say 'Invalid extension name.'; return 0;; esac
-    target="$EXTENSIONS/$extension"
-    [ -d "$target" ] || { say 'Extension folder not found.'; return 0; }
-    printf 'Type DELETE to permanently remove %s: ' "$extension"
-    read confirmation
-    [ "$confirmation" = DELETE ] || { say 'Cancelled.'; return 0; }
-    rm -rf "$target"
-    say "Removed $extension."
+remove() {
+  say 'Extensions:'; choose_extension || { say 'Cancelled.'; return; }; target=$PICKED; name=$(basename "$target")
+  printf 'Type DELETE to permanently remove %s: ' "$name"; read confirm
+  [ "$confirm" = DELETE ] || { say 'Cancelled.'; return; }; rm -rf "$target"; say "Removed $name."
 }
+list_extensions() { for d in "$EXTENSIONS"/*; do [ -d "$d" ] && say "  $(basename "$d")"; done; }
+list_packages() { for f in "$INBOX"/*.zip "$INBOX"/*.tar "$INBOX"/*.tar.gz "$INBOX"/*.tgz "$INBOX"/*.tar.xz; do [ -f "$f" ] && say "  $(basename "$f")"; done; }
 
-init_dirs
+init
 while :; do
-    say ''
-    say 'KUAL Compat Manager'
-    say '1) List installed extensions'
-    say '2) List package inbox'
-    say '3) Install a package from extension-packages'
-    say '4) Remove an installed extension'
-    say '5) Exit'
-    printf 'Choose: '
-    read choice || exit 0
-    case "$choice" in
-        1) list_extensions; pause ;;
-        2) list_packages; pause ;;
-        3) install_package; pause ;;
-        4) remove_extension; pause ;;
-        5) exit 0 ;;
-        *) say 'Choose 1 through 5.'; pause ;;
-    esac
+  say ''; say 'KUAL Compat Manager'; say '1) Launch an installed extension'; say '2) Install a package'; say '3) Remove an extension'; say '4) List extensions'; say '5) List package inbox'; say '6) Exit'
+  printf 'Choose: '; read choice || exit 0
+  case "$choice" in 1) launch;; 2) install;; 3) remove;; 4) list_extensions;; 5) list_packages;; 6) exit 0;; *) say 'Choose 1 through 6.';; esac
+  [ "$choice" = 6 ] || pause
 done
