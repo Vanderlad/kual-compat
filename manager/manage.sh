@@ -24,7 +24,7 @@ extension_name() {
   archive_list "$1" | awk '
     /^\// || /(^|\/)\.\.($|\/)/ || /\/\.\// { bad=1 }
     { p=$0; sub(/^\.\//,"",p); if (p ~ /(^|\/)menu\.json$/) { sub(/\/?menu\.json$/, "", p); menus[p]=1 } }
-    END { n=0; for (p in menus) {n++; chosen=p}; split(chosen,a,"/"); name=a[length(a)]; if (bad || n != 1 || name !~ /^[A-Za-z0-9._-]+$/) exit 1; print name }'
+    END { n=0; for (p in menus) {n++; chosen=p}; m=split(chosen,a,"/"); name=a[m]; if (bad || n != 1 || name !~ /^[A-Za-z0-9._-]+$/) exit 1; print name }'
 }
 extract() { case "$(archive_type "$1")" in zip) unzip -q "$1" -d "$2";; tar) tar -xf "$1" -C "$2";; esac; }
 
