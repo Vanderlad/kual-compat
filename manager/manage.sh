@@ -75,10 +75,11 @@ choose_extension() {
   PICKED=$(sed -n "${pick}p" "$index"); rm -f "$index"; [ -n "$PICKED" ]
 }
 actions() {
-  # KUAL's static items hold name/action in one small JSON object.
-  tr '{' '\n' < "$1/menu.json" | while IFS= read -r item; do
-    name=$(printf '%s' "$item" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-    act=$(printf '%s' "$item" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  # KUAL static items can span multiple JSON lines. Compact one object first.
+  tr '\n{' ' \n' < "$1/menu.json" | while IFS= read -r item || [ -n "$item" ]; do
+    item=$(printf '%s' "$item" | tr '\n' ' ')
+    name=$(printf '%s' "$item" | awk '/"name"[ ]*:/ { s=$0; sub(/^.*"name"[ ]*:[ ]*"/,"",s); sub(/".*$/, "", s); print s }')
+    act=$(printf '%s' "$item" | awk '/"action"[ ]*:/ { s=$0; sub(/^.*"action"[ ]*:[ ]*"/,"",s); sub(/".*$/, "", s); print s }')
     [ -n "$name" ] && [ -n "$act" ] && printf '%s|%s\n' "$name" "$act"
   done
 }
@@ -90,7 +91,14 @@ launch() {
   say 'Actions:'; nl -ba "$index" | sed 's/|/  /'; printf '\nSelect action number (Enter cancels): '; read pick
   case "$pick" in ''|*[!0-9]*) rm -f "$index"; say 'Cancelled.'; return;; esac
   line=$(sed -n "${pick}p" "$index"); rm -f "$index"; [ -n "$line" ] || { say 'That action number does not exist.'; return; }
-  label=${line%%|*}; act=${line#*|}; case "$act" in /*|*'..'*) say 'Unsafe action path rejected.'; return;; esac
+  label=${line%%|*}; act=${line#*|}; base=$(basename "$dir")
+  case "$act" in
+    "$dir"/*) rel=${act#"$dir"/};;
+    "/mnt/us/extensions/$base/"*) rel=${act#"/mnt/us/extensions/$base/"};;
+    *) say 'Action is outside the selected extension; rejected.'; return;;
+  esac
+  case "$rel" in *'..'*) say 'Unsafe action path rejected.'; return;; esac
+  act=$rel
   say "Running: $label"; ( cd "$dir" && /bin/sh -c "./$act" ); say "Finished: $label"
 }
 remove() {
