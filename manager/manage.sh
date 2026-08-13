@@ -14,7 +14,16 @@ init() { mkdir -p "$EXTENSIONS" "$INBOX" "$STAGING" || exit 1; }
 archive_type() { case "$1" in *.zip) echo zip;; *.tar|*.tar.gz|*.tgz|*.tar.xz) echo tar;; *) return 1;; esac; }
 archive_list() {
   case "$(archive_type "$1")" in
-    zip) command -v unzip >/dev/null 2>&1 && unzip -Z1 "$1" || { command -v zipinfo >/dev/null 2>&1 && zipinfo -1 "$1" || return 2; };;
+    zip)
+      if unzip -Z1 "$1" >/dev/null 2>&1; then
+        unzip -Z1 "$1"
+      elif command -v zipinfo >/dev/null 2>&1; then
+        zipinfo -1 "$1"
+      elif command -v unzip >/dev/null 2>&1; then
+        unzip -l "$1" | awk 'NR > 3 && $0 !~ /^[- ]*$/ { print $4 }'
+      else
+        return 2
+      fi;;
     tar) tar -tf "$1";;
   esac
 }
